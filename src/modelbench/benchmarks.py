@@ -221,10 +221,6 @@ class NaiveBenchmarkV1_0_2(GeneralPurposeAiChatBenchmarkV1):
     VERSION = "1.0.2"
     PROMPT_SETS = GENERAL_PROMPT_SETS  # pyright: ignore
 
-    @property
-    def reference_suts(self) -> list[str]:
-        return ["llama-3.1-8b-instruct-turbo-together"]
-
     def score(self, sut, hazard_scores, benchmark_end_time):
         return SecurityScore(self, sut, hazard_scores, benchmark_end_time)
 
@@ -234,13 +230,7 @@ class NaiveBenchmarkV1_0_2(GeneralPurposeAiChatBenchmarkV1):
     def _make_hazards(self) -> Sequence[HazardDefinition]:
         return [SecurityNaiveHazardV1_0_2(self.locale, self.prompt_set, self.evaluator)]
 
-    _uid_definition = {
-        "class": "security_naive_benchmark",
-        "version": "self.VERSION",
-        "locale": "self.locale",
-        "prompt_set": "self.prompt_set",
-        "evaluator": "self.evaluator",
-    }
+    _uid_definition = {**GeneralPurposeAiChatBenchmarkV1._uid_definition, "class": "security_naive_benchmark"}
 
 
 class SecurityBenchmarkV1_0_2(GeneralPurposeAiChatBenchmarkV1):
@@ -263,13 +253,7 @@ class SecurityBenchmarkV1_0_2(GeneralPurposeAiChatBenchmarkV1):
             SecurityNaiveHazardV1_0_2(self.locale, self.prompt_set, self.evaluator),
         ]
 
-    _uid_definition = {
-        "class": "security_benchmark",
-        "version": "self.VERSION",
-        "locale": "self.locale",
-        "prompt_set": "self.prompt_set",
-        "evaluator": "self.evaluator",
-    }
+    _uid_definition = {**GeneralPurposeAiChatBenchmarkV1._uid_definition, "class": "security_benchmark"}
 
 
 class SecurityBenchmarkV1_1(GeneralPurposeAiChatBenchmarkV1):
@@ -284,13 +268,7 @@ class SecurityBenchmarkV1_1(GeneralPurposeAiChatBenchmarkV1):
             SecurityHazardV1_1(self.locale, self.prompt_set, self.evaluator),
         ]
 
-    _uid_definition = {
-        "class": "security_benchmark",
-        "version": "self.VERSION",
-        "locale": "self.locale",
-        "prompt_set": "self.prompt_set",
-        "evaluator": "self.evaluator",
-    }
+    _uid_definition = {**GeneralPurposeAiChatBenchmarkV1._uid_definition, "class": "security_benchmark"}
 
 
 def _walk_subclasses(cls: type) -> Iterator[type]:

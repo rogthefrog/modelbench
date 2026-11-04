@@ -68,6 +68,23 @@ class JournalSearch:
         all_prompts = [response["prompt_id"] for response in cached_responses + fetched_responses]
         return all_prompts
 
+    def annotator_responses(self, **kwargs) -> List[dict]:
+        """All cached and fetched annotator response entries matching the filters."""
+        return self.query("using cached annotator response", **kwargs) + self.query(
+            "fetched annotator response", **kwargs
+        )
+
+    def annotator_response_prompt_uids(self, sut, test, annotator) -> List[str]:
+        return [entry["prompt_id"] for entry in self.annotator_responses(sut=sut, test=test, annotator=annotator)]
+
+    def hazard_score(self, sut, hazard) -> float:
+        """The hazard score from the run's `hazard scored` entry, or the `hazard calibrated` one for calibration runs."""
+        hazard_entry = self.query("hazard scored", sut=sut, hazard=hazard)
+        if not hazard_entry:
+            hazard_entry = self.query("hazard calibrated", sut=sut, hazard=hazard)
+        assert len(hazard_entry) == 1, "Expected exactly 1 `hazard scored` or `hazard calibrated` entry."
+        return hazard_entry[0]["score"]
+
 
 class JournalCheck(ABC):
     """All checks must inherit from this class."""
@@ -105,6 +122,10 @@ class OneToOneCheck(JournalCheck):
     def check(self) -> bool:
         return not any([len(self.duplicates), len(self.missing_prompts), len(self.unknown_prompts)])
 
+    def _failure_prefix(self) -> str:
+        """Subclasses describe what they expected; the base class adds details about the mismatch."""
+        return ""
+
     def failure_message(self) -> str:
         assert not self.check()
         messages = []
@@ -116,7 +137,7 @@ class OneToOneCheck(JournalCheck):
             messages.append(
                 f"{len(self.unknown_prompts)} prompts were found but were not expected: {self.unknown_prompts}"
             )
-        return "\n\t".join(messages)
+        return self._failure_prefix() + "\n\t".join(messages)
 
 
 class EachPromptQueuedOnce(OneToOneCheck):
@@ -125,10 +146,8 @@ class EachPromptQueuedOnce(OneToOneCheck):
         queued_sut_prompts = [entry["prompt_id"] for entry in queued_sut_entries]
         super().__init__(search_engine.test_prompt_uids(test), queued_sut_prompts)
 
-    def failure_message(self) -> str:
-        message = "Expected each prompt uid in the test to be queued exactly once.\n\t"
-        # Call super() to get specific details about duplicates/missing/extra prompts.
-        return message + super().failure_message()
+    def _failure_prefix(self) -> str:
+        return "Expected each prompt uid in the test to be queued exactly once.\n\t"
 
 
 class EachPromptRespondedToOnce(OneToOneCheck):
@@ -138,10 +157,8 @@ class EachPromptRespondedToOnce(OneToOneCheck):
             search_engine.test_prompt_uids(test), search_engine.sut_response_prompt_uids_for_test(sut, test)
         )
 
-    def failure_message(self) -> str:
-        message = f"Expected exactly 1 SUT response for each prompt in the test {self.test}.\n\t"
-        # Call super() to get specific details about duplicates/missing/extra prompts.
-        return message + super().failure_message()
+    def _failure_prefix(self) -> str:
+        return f"Expected exactly 1 SUT response for each prompt in the test {self.test}.\n\t"
 
 
 class EachResponseTranslatedOnce(OneToOneCheck):
@@ -150,10 +167,8 @@ class EachResponseTranslatedOnce(OneToOneCheck):
         translated_responses = search_engine.query("translated sut response", sut=sut, test=test)
         super().__init__(all_sut_response_prompts, [response["prompt_id"] for response in translated_responses])
 
-    def failure_message(self) -> str:
-        message = "Expected each SUT response to be translated exactly once.\n\t"
-        # Call super() to get specific details about duplicates/missing/extra prompts.
-        return message + super().failure_message()
+    def _failure_prefix(self) -> str:
+        return "Expected each SUT response to be translated exactly once.\n\t"
 
 
 class EachItemMeasuredOnce(OneToOneCheck):
@@ -165,10 +180,8 @@ class EachItemMeasuredOnce(OneToOneCheck):
             [response["prompt_id"] for response in measured_items],
         )
 
-    def failure_message(self) -> str:
-        message = "Expected every prompt-response to be measured exactly once.\n"
-        # Call super() to get specific details about duplicates/missing/extra prompts.
-        return message + super().failure_message()
+    def _failure_prefix(self) -> str:
+        return "Expected every prompt-response to be measured exactly once.\n\t"
 
 
 class NumItemsFinishedEqualsMeasuredItems(JournalCheck):
@@ -198,17 +211,13 @@ class EachResponseAnnotatedOnce(OneToOneCheck):
         self.sut = sut
         self.test = test
         translated_responses = search_engine.query("translated sut response", sut=sut, test=test)
-        cached_annotations = search_engine.query(
-            "using cached annotator response", sut=sut, test=test, annotator=annotator
+        super().__init__(
+            [response["prompt_id"] for response in translated_responses],
+            search_engine.annotator_response_prompt_uids(sut, test, annotator),
         )
-        fetched_annotations = search_engine.query("fetched annotator response", sut=sut, test=test, annotator=annotator)
-        all_prompts_annotated = [response["prompt_id"] for response in cached_annotations + fetched_annotations]
-        super().__init__([response["prompt_id"] for response in translated_responses], all_prompts_annotated)
 
-    def failure_message(self) -> str:
-        message = f"Expected exactly 1 {self.annotator} annotation for each response from SUT {self.sut} in test {self.test}\n\t"
-        # Call super() to get specific details about duplicates/missing/extra prompts.
-        return message + super().failure_message()
+    def _failure_prefix(self) -> str:
+        return f"Expected exactly 1 {self.annotator} annotation for each response from SUT {self.sut} in test {self.test}\n\t"
 
 
 class EachAnnotationTranslatedOnce(OneToOneCheck):
@@ -216,19 +225,14 @@ class EachAnnotationTranslatedOnce(OneToOneCheck):
         self.annotator = annotator
         self.sut = sut
         self.test = test
-        cached_annotations = search_engine.query(
-            "using cached annotator response", sut=sut, test=test, annotator=annotator
-        )
-        fetched_annotations = search_engine.query("fetched annotator response", sut=sut, test=test, annotator=annotator)
-        all_prompts_annotated = [response["prompt_id"] for response in cached_annotations + fetched_annotations]
         translated_annotations = search_engine.query("translated annotation", sut=sut, test=test, annotator=annotator)
+        super().__init__(
+            search_engine.annotator_response_prompt_uids(sut, test, annotator),
+            [response["prompt_id"] for response in translated_annotations],
+        )
 
-        super().__init__(all_prompts_annotated, [response["prompt_id"] for response in translated_annotations])
-
-    def failure_message(self) -> str:
-        message = f"Expected each {self.annotator} annotation for SUT {self.sut} in test {self.test} to be translated exactly once.\n\t"
-        # Call super() to get specific details about duplicates/missing/extra prompts.
-        return message + super().failure_message()
+    def _failure_prefix(self) -> str:
+        return f"Expected each {self.annotator} annotation for SUT {self.sut} in test {self.test} to be translated exactly once.\n\t"
 
 
 class MinValidAnnotatorItems(JournalCheck):
@@ -263,11 +267,6 @@ class AnnotationsMergedCorrectly(JournalCheck):
     def __init__(self, search_engine: JournalSearch, sut, test):
         self.sut = sut
         self.test = test
-
-        # Security benchmarks with a single annotator are allowed.
-        starting_run_entry = search_engine.query("starting run")
-        if not starting_run_entry:
-            starting_run_entry = search_engine.query("starting calibration run")
 
         translated_responses = search_engine.query("translated sut response", sut=sut, test=test)
         self.response_by_id = {i["prompt_id"]: i["response_text"] for i in translated_responses}
@@ -349,11 +348,7 @@ class HazardScoreIsFracSafe(JournalCheck):
         self.tests: List[str] = self._get_test_uids(search_engine)
         self.total_frac_safe: float = self._get_frac_safe(search_engine)
 
-        hazard_entry = search_engine.query("hazard scored", sut=sut, hazard=hazard)
-        if not len(hazard_entry):
-            hazard_entry = search_engine.query("hazard calibrated", sut=sut, hazard=hazard)
-        assert len(hazard_entry) == 1, "Expected exactly 1 `hazard scored` or `hazard calibrated` entry."
-        self.journal_score = hazard_entry[0]["score"]
+        self.journal_score = search_engine.hazard_score(sut, hazard)
 
     def _get_test_uids(self, search_engine) -> List[str]:
         hazard_info = search_engine.query("hazard info", hazard=self.hazard)[0]
@@ -389,11 +384,7 @@ class HazardScoreInRange(JournalCheck):
         self.sut = sut
         self.hazard = hazard
 
-        hazard_entry = search_engine.query("hazard scored", sut=sut, hazard=hazard)
-        if not len(hazard_entry):
-            hazard_entry = search_engine.query("hazard calibrated", sut=sut, hazard=hazard)
-        assert len(hazard_entry) == 1, "Expected exactly 1 `hazard scored` or `hazard calibrated` entry."
-        self.journal_score = hazard_entry[0]["score"]
+        self.journal_score = search_engine.hazard_score(sut, hazard)
 
     def check(self) -> bool:
         return isinstance(self.journal_score, float) and self.MIN_SCORE <= self.journal_score <= self.MAX_SCORE
@@ -498,6 +489,7 @@ class ConsistencyChecker:
     def __init__(self, journal_path, calibration=False):
         self.journal_path = journal_path
         self.calibration = calibration
+        self._search_engine = JournalSearch(journal_path)
 
         # Entities to run checks for.
         self.benchmark = None
@@ -541,7 +533,7 @@ class ConsistencyChecker:
 
     def _collect_entities(self):
         # Get all SUTs and tests that were ran in the journal. We will run checks for each (SUT, test) pair.
-        search_engine = JournalSearch(self.journal_path)
+        search_engine = self._search_engine
         start_message = "starting calibration run" if self.calibration else "starting run"
         starting_run_entry = search_engine.query(start_message)
         assert len(starting_run_entry) == 1
@@ -558,15 +550,8 @@ class ConsistencyChecker:
         except Exception as e:
             # Can't load test object, get annotators from journal instead.
             print("Failed to load test object. Collecting annotator UIDs to check from journal instead.")
-            fetched_annotator_entries = search_engine.query(
-                "fetched annotator response", test=self.tests[0], sut=self.suts[0]
-            )
-            cached_annotator_entries = search_engine.query(
-                "using cached annotator response", test=self.tests[0], sut=self.suts[0]
-            )
-            self.annotators = list(
-                set([entry["annotator"] for entry in fetched_annotator_entries + cached_annotator_entries])
-            )
+            annotator_entries = search_engine.annotator_responses(test=self.tests[0], sut=self.suts[0])
+            self.annotators = list({entry["annotator"] for entry in annotator_entries})
         # Get all hazards.
         hazard_entries = search_engine.query("hazard info", benchmark=self.benchmark)
         if len(hazard_entries) > 0:
@@ -625,7 +610,7 @@ class ConsistencyChecker:
 
     def _collect_results(self):
         """Populate the results/warning tables of each check level."""
-        search_engine = JournalSearch(self.journal_path)
+        search_engine = self._search_engine
         for test in self.tests:
             for sut in self.suts:
                 self.test_sut_level_checker.run_checks_for_row(search_engine, sut=sut, test=test)
