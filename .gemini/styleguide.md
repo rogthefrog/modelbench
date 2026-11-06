@@ -164,18 +164,18 @@ design, domain clarity, correctness, and tests. Leave formatting to `black`.
 
 ## Review Tone
 
-* Be direct but collegial. Start with what's good, then the concerns. Short, genuine praise is fine ("Love
-  to see it", "net negative line count").
-* Ask questions when intent is unclear ("Could you say more about...?", "What's the use case?", "What user's
-  problem does this solve?"). Don't assume the author is wrong.
-* Explain *why*, grounding it in a principle (DDD, YAGNI, idempotency, Postel's law, reproducibility) or a
-  concrete failure scenario.
+* Be terse. Summaries state what the PR changes and what needs fixing. Skip the "why" unless it's
+  genuinely not obvious.
+* Don't editorialize. Stick to objective observations: what the code does, what breaks, under what input.
+  No praise, no value judgments ("clever", "gross", "nice", "elegant"), no emotional language.
+* Ask a question only when intent is unclear ("What's the use case?"). Don't assume the author is wrong.
+* When a comment's rationale isn't obvious, give it in one sentence: a concrete failure scenario, or a
+  principle (DDD, YAGNI, idempotency, reproducibility).
 * Suggest a concrete alternative, with a short code snippet when it helps.
-* Separate blocking concerns from suggestions. Mark optional items as such ("Small nit:", "Just a
-  suggestion, no need to change this now", "Fine for this PR, but at some point...").
+* Separate blocking concerns from suggestions. Prefix optional items with "Nit:" or "Optional:".
 * Under deadline pressure, accept pragmatic shortcuts, but ask for a follow-up card that describes the right
   fix.
-* One issue per comment. Keep it short.
+* One issue per comment.
 
 ## Do Not Flag
 
