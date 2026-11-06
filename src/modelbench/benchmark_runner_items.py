@@ -105,6 +105,8 @@ class Timer:
 
     def __init__(self):
         super().__init__()
+        self.start = None
+        self.end = None
         self.elapsed = 0
 
     def __enter__(self):

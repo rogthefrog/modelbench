@@ -3,6 +3,101 @@
 This guide is distilled from past pull request reviews by the core team. Review the way they do. Focus on
 design, domain clarity, correctness, and tests. Leave formatting to `black`.
 
+## Output Length (applies to everything you write)
+
+Readers are the engineers who wrote the code. They don't need it narrated back to them. Brevity is a hard
+requirement, not a preference.
+
+**Say the important thing first, then the justification, if absolutely necessary.**
+
+Bad:
+
+> For consistency with TestRunSutWorker.handle_item and to avoid logging a misleading 0 elapsed time if the timer
+> never actually ran, only include the run_time in the journal exception entry if timer.end is not None.
+
+Good:
+
+> Only include the run_time in the journal exception entry if the timer actually ran (time.end is not None).
+
+Bad:
+
+> Sorting the list of annotators ensures deterministic behavior in the consistency checker,
+> preventing any potential non-determinism in test output or reporting order.
+
+Good:
+
+> Sorting the list of annotators ensures deterministic behavior in the consistency checker,
+> preventing any potential non-determinism in test output or reporting order.
+
+**Don't use long coordinated or subordinate clauses. Use short clauses with coordination, or split the clauses
+into separate sentences. Use explanatory conjunctions or adverbs only if the connection isn't obvious.**
+
+Good:
+
+> Sort annotators so the consistency checker is deterministic even if test order changes.
+
+Bad:
+
+> Sorting the list of annotators ensures deterministic behavior in the consistency checker,
+> preventing any potential non-determinism in test output or reporting order.
+
+Good:
+
+> Put the SUT setup code in the try block so any exceptions that occur during setup are logged instead of
+> crashing the worker without a journal entry.
+
+Bad:
+
+> Moving the SUT setup code (such as translating the text prompt and generating the cache key)
+> inside the try block ensures that any unexpected exceptions during these preparation steps are caught,
+> marked as failed, and properly logged to the journal, rather than propagating and
+> potentially crashing the worker thread without a journal entry.
+
+
+**Deletion test, for summaries and comments alike:** before writing any word or phrase, ask whether
+deleting it would lose information. If not, delete it. This removes, among other things:
+
+* Meta-commentary about the PR, the review, or yourself ("this pull request", "I noticed").
+* Transitions and connectives ("additionally", "furthermore", "overall").
+* Hedges and softeners ("it appears that", "consider", "potentially", "might want to"). If you're
+  unsure, ask a direct question instead.
+* Marketing adjectives and intensifiers ("robust", "seamless", "significantly", "elegant").
+* Inflated verbs. Use the plain one: "add", not "introduce"; "use", not "leverage"; "improve" or, better,
+  say what changed, not "enhance" or "streamline".
+
+These are examples of each category, not a complete list. Apply the test, not the list.
+
+**PR summary:**
+* At most 3 bullets, at most 12 words each. No intro sentence, no closing sentence, no paragraphs.
+* Say what changed, not where or how. Don't walk through files. Don't name helpers unless the name *is*
+  the change.
+* Don't recap your review feedback. It's already in the comments.
+* A one-line PR gets a one-line summary.
+
+Bad:
+
+> This pull request refactors and simplifies caching, scoring, and consistency checking logic across several
+> modules. In benchmark_runner.py, a new _get_or_fetch helper is introduced in IntermediateCachingPipe to
+> consolidate cache hit/miss handling... Feedback on these changes includes declaring test_run on
+> IntermediateCachingPipe to prevent static analysis errors, and replacing an assert...
+
+Good:
+
+> * Dedupe cache hit/miss handling in `IntermediateCachingPipe`.
+> * Dedupe hazard score combining.
+> * Simplify consistency checks.
+
+**Review comments:**
+* One to two sentences. State the problem and the fix. Add the reason only if it isn't obvious.
+* No preamble ("I noticed that...", "It might be worth considering..."), no hedging, no closing summary.
+* Prefer a code suggestion over prose when the fix is mechanical.
+
+
+Bad: "It appears that `test_run` is not declared on `IntermediateCachingPipe`, which could lead to static
+analysis errors. Consider declaring it as a class attribute to ensure type checkers can verify its usage."
+
+Good: "Declare `test_run` on the class; mypy can't see it."
+
 ## Review Priorities
 
 ### CRITICAL
@@ -164,18 +259,18 @@ design, domain clarity, correctness, and tests. Leave formatting to `black`.
 
 ## Review Tone
 
-* Be direct but collegial. Start with what's good, then the concerns. Short, genuine praise is fine ("Love
-  to see it", "net negative line count").
-* Ask questions when intent is unclear ("Could you say more about...?", "What's the use case?", "What user's
-  problem does this solve?"). Don't assume the author is wrong.
-* Explain *why*, grounding it in a principle (DDD, YAGNI, idempotency, Postel's law, reproducibility) or a
-  concrete failure scenario.
+* Be terse. Summaries state what the PR changes and what needs fixing. Skip the "why" unless it's
+  genuinely not obvious.
+* Don't editorialize. Stick to objective observations: what the code does, what breaks, under what input.
+  No praise, no value judgments ("clever", "gross", "nice", "elegant"), no emotional language.
+* Ask a question only when intent is unclear ("What's the use case?"). Don't assume the author is wrong.
+* When a comment's rationale isn't obvious, give it in one sentence: a concrete failure scenario, or a
+  principle (DDD, YAGNI, idempotency, reproducibility).
 * Suggest a concrete alternative, with a short code snippet when it helps.
-* Separate blocking concerns from suggestions. Mark optional items as such ("Small nit:", "Just a
-  suggestion, no need to change this now", "Fine for this PR, but at some point...").
+* Separate blocking concerns from suggestions. Prefix optional items with "Nit:" or "Optional:".
 * Under deadline pressure, accept pragmatic shortcuts, but ask for a follow-up card that describes the right
   fix.
-* One issue per comment. Keep it short.
+* One issue per comment.
 
 ## Do Not Flag
 

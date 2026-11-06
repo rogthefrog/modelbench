@@ -6,7 +6,7 @@ import time
 from abc import abstractmethod
 from collections import defaultdict
 from datetime import datetime
-from typing import Any, Iterable, Optional, Sequence
+from typing import Any, Callable, Iterable, Optional, Sequence
 
 from airrlogger.log_config import get_logger
 from pydantic import BaseModel
@@ -269,12 +269,47 @@ class IntermediateCachingPipe(Pipe):
     this just makes a cache available for internal use to cache intermediate results.
     """
 
+    # set by subclasses; used to label journal entries and count cache hits/misses
+    journal_label: str
+    cached_counter: Any
+    fetched_counter: Any
+
     def __init__(self, cache: MBCache, thread_count=1):
         super().__init__(thread_count)
         self.cache = cache
 
     def handle_item(self, item) -> Optional[Any]:
         pass
+
+    def _get_or_fetch(
+        self,
+        item: TestRunItem,
+        cache_key: str,
+        fetch: Callable[[], Any],
+        cached_fields: dict,
+        fetched_fields: dict,
+        timer: Optional[Timer] = None,
+    ):
+        """Return the cached response for cache_key, or call fetch() and cache its result. Journals either way."""
+        self._debug(f"looking for {cache_key} in cache")
+        if cache_key in self.cache:
+            self._debug(f"cache entry found")
+            response = self.cache[cache_key]
+            self.test_run.journal.item_entry(
+                f"using cached {self.journal_label} response", item, **cached_fields, response=response
+            )
+            self.cached_counter.inc()
+        else:
+            self._debug(f"cache entry not found; processing and saving")
+            timer = timer or Timer()
+            with timer:
+                response = fetch()
+            self.cache[cache_key] = response
+            self.test_run.journal.item_entry(
+                f"fetched {self.journal_label} response", item, **fetched_fields, run_time=timer, response=response
+            )
+            self.fetched_counter.inc()
+        return response
 
     def join(self):
         super().join()
@@ -320,6 +355,10 @@ class TestRunSutAssigner(Pipe):
 
 
 class TestRunSutWorker(IntermediateCachingPipe):
+    journal_label = "sut"
+    cached_counter = CACHED_SUT_RESPONSES
+    fetched_counter = FETCHED_SUT_RESPONSES
+
     def __init__(self, test_run: TestRunBase, cache: MBCache, thread_count=1):
         super().__init__(cache, thread_count)
         self.test_run = test_run
@@ -328,46 +367,38 @@ class TestRunSutWorker(IntermediateCachingPipe):
         sut = item.sut
         raw_request = sut.translate_text_prompt(item.test_item.prompt, item.test.actual_test.sut_options())
         cache_key = self.make_cache_key(raw_request, sut.uid)
-        self._debug(f"looking for {cache_key} in cache")
+        # only gets started on a cache miss; journaled with any exception if it ran
+        timer = Timer()
         try:
-            if cache_key in self.cache:
-                self._debug(f"cache entry found")
-                raw_response = self.cache[cache_key]
-                self.test_run.journal.item_entry(
-                    "using cached sut response", item, request=raw_request, response=raw_response
-                )
-                CACHED_SUT_RESPONSES.inc()
-            else:
-                self._debug(f"cache entry not found; processing and saving")
-                with Timer() as timer:
-                    try:
-                        raw_response = sut.evaluate(raw_request)
-                    except Exception as e:
-                        logger.error(f"failure fetching sut {sut.uid} on first try: {raw_request}", exc_info=True)
-                        FAILURES_FETCHING_SUT.inc()
-                        # TODO replace with full retry logic with
-                        raw_response = sut.evaluate(raw_request)
-                self.cache[cache_key] = raw_response
-                self.test_run.journal.item_entry(
-                    "fetched sut response", item, run_time=timer, request=raw_request, response=raw_response
-                )
-                FETCHED_SUT_RESPONSES.inc()
-
+            raw_response = self._get_or_fetch(
+                item,
+                cache_key,
+                lambda: self._evaluate(sut, raw_request),
+                cached_fields={"request": raw_request},
+                fetched_fields={"request": raw_request},
+                timer=timer,
+            )
             response = sut.translate_response(raw_request, raw_response)
             item.sut_response = response
             self.test_run.journal.item_entry("translated sut response", item, response=response)
 
         except Exception as e:
-            extra_info = {}
-            try:
-                extra_info["run_time"] = timer
-            except NameError:
-                pass
+            extra_info = {"run_time": timer} if timer.end is not None else {}
             item.failed = True
             self.test_run.journal.item_exception_entry("sut exception", item, e, **extra_info)
             logger.error(f"failure handling sut item {item}:", exc_info=True)
             FAILURES_HANDLING_SUT.inc()
         return item
+
+    @staticmethod
+    def _evaluate(sut: PromptResponseSUT, raw_request):
+        try:
+            return sut.evaluate(raw_request)
+        except Exception:
+            logger.error(f"failure fetching sut {sut.uid} on first try: {raw_request}", exc_info=True)
+            FAILURES_FETCHING_SUT.inc()
+            # TODO replace with full retry logic
+            return sut.evaluate(raw_request)
 
     @staticmethod
     def make_cache_key(sut_request, sut_uid):
@@ -378,14 +409,19 @@ class TestRunSutWorker(IntermediateCachingPipe):
 
 
 class TestRunAnnotationWorker(IntermediateCachingPipe):
-    def __init__(self, test_run: TestRunBase, cache: MBCache, thread_count=1, cache_path=None):
+    journal_label = "annotator"
+    cached_counter = CACHED_ANNOTATOR_RESPONSES
+    fetched_counter = FETCHED_ANNOTATOR_RESPONSES
+
+    def __init__(self, test_run: TestRunBase, cache: MBCache, thread_count=1):
         super().__init__(cache, thread_count)
         self.test_run = test_run
 
     def handle_item(self, item: TestRunItem) -> TestRunItem:
+        timer = Timer()
         try:
             if item.sut_response:
-                with Timer() as timer:
+                with timer:
                     self.collect_annotations(item)
                     item.test.measure_quality(item)
                 self.test_run.journal.item_entry(
@@ -394,12 +430,7 @@ class TestRunAnnotationWorker(IntermediateCachingPipe):
         except Exception as e:
             item.failed = True
             item.exceptions.append(e)
-            extra_info = {}
-            try:
-                extra_info["run_time"] = timer
-            except NameError:
-                pass
-            self.test_run.journal.item_exception_entry("annotation exception", item, e, **extra_info)
+            self.test_run.journal.item_exception_entry("annotation exception", item, e, run_time=timer)
             if isinstance(e, MissingAnnotationError):
                 logger.warning(
                     f"could not measure {item.source_id()} in {item.test.uid}: {e}; see annotator failure above"
@@ -427,34 +458,13 @@ class TestRunAnnotationWorker(IntermediateCachingPipe):
         for annotator in self.test_run.annotators_for_test(item.test):
             try:
                 annotator_request = annotator.translate_request(item.test_item, item.sut_response)
-                cache_key = self.make_cache_key(annotator_request, annotator.uid)
-                self._debug(f"looking for {cache_key} in cache")
-                if cache_key in self.cache:
-                    self._debug(f"cache entry found")
-                    annotator_response = self.cache[cache_key]
-                    self.test_run.journal.item_entry(
-                        "using cached annotator response",
-                        item,
-                        annotator=annotator.uid,
-                        annotator_request=annotator_request,
-                        response=annotator_response,
-                    )
-                    CACHED_ANNOTATOR_RESPONSES.inc()
-                else:
-                    self._debug(f"cache entry not found; processing and saving")
-                    with Timer() as timer:
-                        annotator_response = annotator.annotate(annotator_request)
-                    self.cache[cache_key] = annotator_response
-                    self.test_run.journal.item_entry(
-                        "fetched annotator response",
-                        item,
-                        annotator=annotator.uid,
-                        run_time=timer,
-                        request=annotator_request,
-                        response=annotator_response,
-                    )
-                    FETCHED_ANNOTATOR_RESPONSES.inc()
-
+                annotator_response = self._get_or_fetch(
+                    item,
+                    self.make_cache_key(annotator_request, annotator.uid),
+                    lambda: annotator.annotate(annotator_request),
+                    cached_fields={"annotator": annotator.uid, "annotator_request": annotator_request},
+                    fetched_fields={"annotator": annotator.uid, "request": annotator_request},
+                )
                 annotation = annotator.translate_response(annotator_request, annotator_response)
                 self.test_run.journal.item_entry(
                     "translated annotation",
