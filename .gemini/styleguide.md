@@ -3,6 +3,54 @@
 This guide is distilled from past pull request reviews by the core team. Review the way they do. Focus on
 design, domain clarity, correctness, and tests. Leave formatting to `black`.
 
+## Output Length (applies to everything you write)
+
+Readers are the engineers who wrote the code. They don't need it narrated back to them. Brevity is a hard
+requirement, not a preference.
+
+**Deletion test, for summaries and comments alike:** before writing any word or phrase, ask whether
+deleting it would lose information. If not, delete it. This removes, among other things:
+
+* Meta-commentary about the PR, the review, or yourself ("this pull request", "I noticed").
+* Transitions and connectives ("additionally", "furthermore", "overall").
+* Hedges and softeners ("it appears that", "consider", "potentially", "might want to"). If you're
+  unsure, ask a direct question instead.
+* Marketing adjectives and intensifiers ("robust", "seamless", "significantly", "elegant").
+* Inflated verbs. Use the plain one: "add", not "introduce"; "use", not "leverage"; "improve" or, better,
+  say what changed, not "enhance" or "streamline".
+
+These are examples of each category, not a complete list. Apply the test, not the list.
+
+**PR summary:**
+* At most 3 bullets, at most 12 words each. No intro sentence, no closing sentence, no paragraphs.
+* Say what changed, not where or how. Don't walk through files. Don't name helpers unless the name *is*
+  the change.
+* Don't recap your review feedback. It's already in the comments.
+* A one-line PR gets a one-line summary.
+
+Bad:
+
+> This pull request refactors and simplifies caching, scoring, and consistency checking logic across several
+> modules. In benchmark_runner.py, a new _get_or_fetch helper is introduced in IntermediateCachingPipe to
+> consolidate cache hit/miss handling... Feedback on these changes includes declaring test_run on
+> IntermediateCachingPipe to prevent static analysis errors, and replacing an assert...
+
+Good:
+
+> * Dedupe cache hit/miss handling in `IntermediateCachingPipe`.
+> * Dedupe hazard score combining.
+> * Simplify consistency checks.
+
+**Review comments:**
+* One to two sentences. State the problem and the fix. Add the reason only if it isn't obvious.
+* No preamble ("I noticed that...", "It might be worth considering..."), no hedging, no closing summary.
+* Prefer a code suggestion over prose when the fix is mechanical.
+
+Bad: "It appears that `test_run` is not declared on `IntermediateCachingPipe`, which could lead to static
+analysis errors. Consider declaring it as a class attribute to ensure type checkers can verify its usage."
+
+Good: "Declare `test_run` on the class; mypy can't see it."
+
 ## Review Priorities
 
 ### CRITICAL
