@@ -8,6 +8,52 @@ design, domain clarity, correctness, and tests. Leave formatting to `black`.
 Readers are the engineers who wrote the code. They don't need it narrated back to them. Brevity is a hard
 requirement, not a preference.
 
+**Say the important thing first, then the justification, if absolutely necessary.**
+
+Bad:
+
+> For consistency with TestRunSutWorker.handle_item and to avoid logging a misleading 0 elapsed time if the timer
+> never actually ran, only include the run_time in the journal exception entry if timer.end is not None.
+
+Good:
+
+> Only include the run_time in the journal exception entry if the timer actually ran (time.end is not None).
+
+Bad:
+
+> Sorting the list of annotators ensures deterministic behavior in the consistency checker,
+> preventing any potential non-determinism in test output or reporting order.
+
+Good:
+
+> Sorting the list of annotators ensures deterministic behavior in the consistency checker,
+> preventing any potential non-determinism in test output or reporting order.
+
+**Don't use long coordinated or subordinate clauses. Use short clauses with coordination, or split the clauses
+into separate sentences. Use explanatory conjunctions or adverbs only if the connection isn't obvious.**
+
+Good:
+
+> Sort annotators so the consistency checker is deterministic even if test order changes.
+
+Bad:
+
+> Sorting the list of annotators ensures deterministic behavior in the consistency checker,
+> preventing any potential non-determinism in test output or reporting order.
+
+Good:
+
+> Put the SUT setup code in the try block so any exceptions that occur during setup are logged instead of
+> crashing the worker without a journal entry.
+
+Bad:
+
+> Moving the SUT setup code (such as translating the text prompt and generating the cache key)
+> inside the try block ensures that any unexpected exceptions during these preparation steps are caught,
+> marked as failed, and properly logged to the journal, rather than propagating and
+> potentially crashing the worker thread without a journal entry.
+
+
 **Deletion test, for summaries and comments alike:** before writing any word or phrase, ask whether
 deleting it would lose information. If not, delete it. This removes, among other things:
 
@@ -45,6 +91,7 @@ Good:
 * One to two sentences. State the problem and the fix. Add the reason only if it isn't obvious.
 * No preamble ("I noticed that...", "It might be worth considering..."), no hedging, no closing summary.
 * Prefer a code suggestion over prose when the fix is mechanical.
+
 
 Bad: "It appears that `test_run` is not declared on `IntermediateCachingPipe`, which could lead to static
 analysis errors. Consider declaring it as a class attribute to ensure type checkers can verify its usage."
