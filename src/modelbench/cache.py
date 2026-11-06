@@ -1,5 +1,6 @@
 import collections.abc
 from abc import ABC, abstractmethod
+from pathlib import Path
 
 import diskcache
 
@@ -75,9 +76,7 @@ class DiskCache(MBCache):
     def __init__(self, cache_path):
         super().__init__()
         self.cache_path = cache_path
-        self.cache_name = str(cache_path).split("/")[-1]
-        if self.cache_name.endswith("_cache"):
-            self.cache_name = self.cache_name[: -len("_cache")]
+        self.cache_name = Path(cache_path).name.removesuffix("_cache")
         self.raw_cache = diskcache.Cache(cache_path, size_limit=MAX_CACHE_SIZE)
         self.contents = self.raw_cache
 
