@@ -6,30 +6,46 @@ name: Claude PR review
 #   CLAUDE_REVIEW_USERS: JSON list of GitHub logins whose PRs get reviewed, e.g. ["rogthefrog", "wpietri"].
 # Optional: CLAUDE_MODEL (default claude-opus-5-5), CLOUD_ML_REGION (default global).
 #
-# PRs from forks get no OIDC token, so this only runs for branches in this repo. Bot PRs are skipped.
+# Runs automatically on PRs from branches in this repo (fork PRs get no OIDC token). Bot PRs are skipped.
+# On demand: anyone in CLAUDE_REVIEW_USERS comments "/claude-review" on any PR, including PRs from forks.
+# The comment trigger only works once this file is on the default branch.
 
 on:
   pull_request:
     types: [opened, ready_for_review, reopened]
+  issue_comment:
+    types: [created]
 
 concurrency:
-  group: claude-review-${{ github.event.pull_request.number }}
+  group: claude-review-${{ github.event.pull_request.number || github.event.issue.number }}
   cancel-in-progress: true
 
 jobs:
   review:
     if: >-
-      github.event.pull_request.head.repo.full_name == github.repository
-      && github.event.pull_request.user.type != 'Bot'
-      && contains(fromJSON(vars.CLAUDE_REVIEW_USERS || '[]'), github.event.pull_request.user.login)
+      (
+        github.event_name == 'pull_request'
+        && github.event.pull_request.head.repo.full_name == github.repository
+        && github.event.pull_request.user.type != 'Bot'
+        && contains(fromJSON(vars.CLAUDE_REVIEW_USERS || '[]'), github.event.pull_request.user.login)
+      ) || (
+        github.event_name == 'issue_comment'
+        && github.event.issue.pull_request
+        && startsWith(github.event.comment.body, '/claude-review')
+        && contains(fromJSON(vars.CLAUDE_REVIEW_USERS || '[]'), github.event.comment.user.login)
+      )
     runs-on: ubuntu-latest
     permissions:
       contents: read
       pull-requests: write
       id-token: write
+    env:
+      PR_NUMBER: ${{ github.event.pull_request.number || github.event.issue.number }}
     steps:
+      # Check out the PR's code for context. It's only read, never executed.
       - uses: actions/checkout@v4
         with:
+          ref: refs/pull/${{ env.PR_NUMBER }}/head
           fetch-depth: 1
 
       - uses: google-github-actions/auth@v2
@@ -46,7 +62,7 @@ jobs:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           prompt: |
             REPO: ${{ github.repository }}
-            PR NUMBER: ${{ github.event.pull_request.number }}
+            PR NUMBER: ${{ env.PR_NUMBER }}
 
             Review this pull request. Read .gemini/styleguide.md first and follow it exactly: it defines
             what to flag, severity levels, tone, and output length.
