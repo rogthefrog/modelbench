@@ -1,7 +1,9 @@
 import json
+import logging
 import shutil
 from abc import ABC, abstractmethod
 from collections import Counter, defaultdict
+from dataclasses import dataclass
 from itertools import product
 from typing import Dict, List
 
@@ -10,9 +12,12 @@ from rich.console import Console
 from rich.table import Table
 
 from modelbench.run_journal import journal_reader
+from modelgauge.base_test import PromptResponseTest
 from modelgauge.config import load_secrets_from_config
 from modelgauge.constants import PRIVATE_EVALUATOR
 from modelgauge.test_registry import TESTS
+
+logger = logging.getLogger(__name__)
 
 LINE_WIDTH = shutil.get_terminal_size(fallback=(120, 50)).columns
 
@@ -105,9 +110,13 @@ class OneToOneCheck(JournalCheck):
     def check(self) -> bool:
         return not any([len(self.duplicates), len(self.missing_prompts), len(self.unknown_prompts)])
 
+    @abstractmethod
+    def expectation(self) -> str:
+        """What the check expects. Shown before the details of a failure."""
+
     def failure_message(self) -> str:
         assert not self.check()
-        messages = []
+        messages = [self.expectation()]
         if len(self.duplicates) > 0:
             messages.append(f"{len(self.duplicates)} duplicate prompts were found: {self.duplicates}")
         if len(self.missing_prompts) > 0:
@@ -125,10 +134,8 @@ class EachPromptQueuedOnce(OneToOneCheck):
         queued_sut_prompts = [entry["prompt_id"] for entry in queued_sut_entries]
         super().__init__(search_engine.test_prompt_uids(test), queued_sut_prompts)
 
-    def failure_message(self) -> str:
-        message = "Expected each prompt uid in the test to be queued exactly once.\n\t"
-        # Call super() to get specific details about duplicates/missing/extra prompts.
-        return message + super().failure_message()
+    def expectation(self) -> str:
+        return "Expected each prompt uid in the test to be queued exactly once."
 
 
 class EachPromptRespondedToOnce(OneToOneCheck):
@@ -138,10 +145,8 @@ class EachPromptRespondedToOnce(OneToOneCheck):
             search_engine.test_prompt_uids(test), search_engine.sut_response_prompt_uids_for_test(sut, test)
         )
 
-    def failure_message(self) -> str:
-        message = f"Expected exactly 1 SUT response for each prompt in the test {self.test}.\n\t"
-        # Call super() to get specific details about duplicates/missing/extra prompts.
-        return message + super().failure_message()
+    def expectation(self) -> str:
+        return f"Expected exactly 1 SUT response for each prompt in the test {self.test}."
 
 
 class EachResponseTranslatedOnce(OneToOneCheck):
@@ -150,10 +155,8 @@ class EachResponseTranslatedOnce(OneToOneCheck):
         translated_responses = search_engine.query("translated sut response", sut=sut, test=test)
         super().__init__(all_sut_response_prompts, [response["prompt_id"] for response in translated_responses])
 
-    def failure_message(self) -> str:
-        message = "Expected each SUT response to be translated exactly once.\n\t"
-        # Call super() to get specific details about duplicates/missing/extra prompts.
-        return message + super().failure_message()
+    def expectation(self) -> str:
+        return "Expected each SUT response to be translated exactly once."
 
 
 class EachItemMeasuredOnce(OneToOneCheck):
@@ -165,10 +168,8 @@ class EachItemMeasuredOnce(OneToOneCheck):
             [response["prompt_id"] for response in measured_items],
         )
 
-    def failure_message(self) -> str:
-        message = "Expected every prompt-response to be measured exactly once.\n"
-        # Call super() to get specific details about duplicates/missing/extra prompts.
-        return message + super().failure_message()
+    def expectation(self) -> str:
+        return "Expected every prompt-response to be measured exactly once."
 
 
 class NumItemsFinishedEqualsMeasuredItems(JournalCheck):
@@ -205,10 +206,10 @@ class EachResponseAnnotatedOnce(OneToOneCheck):
         all_prompts_annotated = [response["prompt_id"] for response in cached_annotations + fetched_annotations]
         super().__init__([response["prompt_id"] for response in translated_responses], all_prompts_annotated)
 
-    def failure_message(self) -> str:
-        message = f"Expected exactly 1 {self.annotator} annotation for each response from SUT {self.sut} in test {self.test}\n\t"
-        # Call super() to get specific details about duplicates/missing/extra prompts.
-        return message + super().failure_message()
+    def expectation(self) -> str:
+        return (
+            f"Expected exactly 1 {self.annotator} annotation for each response from SUT {self.sut} in test {self.test}"
+        )
 
 
 class EachAnnotationTranslatedOnce(OneToOneCheck):
@@ -225,10 +226,8 @@ class EachAnnotationTranslatedOnce(OneToOneCheck):
 
         super().__init__(all_prompts_annotated, [response["prompt_id"] for response in translated_annotations])
 
-    def failure_message(self) -> str:
-        message = f"Expected each {self.annotator} annotation for SUT {self.sut} in test {self.test} to be translated exactly once.\n\t"
-        # Call super() to get specific details about duplicates/missing/extra prompts.
-        return message + super().failure_message()
+    def expectation(self) -> str:
+        return f"Expected each {self.annotator} annotation for SUT {self.sut} in test {self.test} to be translated exactly once."
 
 
 class MinValidAnnotatorItems(JournalCheck):
@@ -493,25 +492,77 @@ class JournalEntityLevelCheck:
                 self.warnings.append(f"{self._col_name(check_cls)}: {check.failure_message()}")
 
 
+@dataclass(frozen=True)
+class RunEntities:
+    """The benchmark, SUTs, tests, annotators, and hazards that a journal's run covers."""
+
+    benchmark: str
+    suts: List[str]
+    tests: List[str]
+    annotators: List[str]
+    hazards: List[str]  # Empty for older journals, which have no "hazard info" entries.
+
+    @classmethod
+    def from_journal(cls, search_engine: JournalSearch, calibration: bool) -> "RunEntities":
+        start_message = "starting calibration run" if calibration else "starting run"
+        starting_run_entry = search_engine.query(start_message)
+        assert len(starting_run_entry) == 1
+
+        benchmarks = starting_run_entry[0]["benchmarks"]
+        assert len(benchmarks) == 1, "Consistency checker can only handle single-benchmark journals."
+        suts = starting_run_entry[0]["suts"]
+        tests = starting_run_entry[0]["tests"]
+        hazard_entries = search_engine.query("hazard info", benchmark=benchmarks[0])
+        return cls(
+            benchmark=benchmarks[0],
+            suts=suts,
+            tests=tests,
+            annotators=cls._collect_annotators(search_engine, sut=suts[0], test=tests[0]),
+            hazards=sorted({entry["hazard"] for entry in hazard_entries}),
+        )
+
+    @staticmethod
+    def _collect_annotators(search_engine: JournalSearch, sut: str, test: str) -> List[str]:
+        try:
+            test_obj = TESTS.make_instance(test, secrets=load_secrets_from_config())
+            assert isinstance(test_obj, PromptResponseTest), f"{test} is not a PromptResponseTest."
+            return test_obj.get_annotators()
+        except Exception:
+            logger.warning(
+                "Failed to load test object. Collecting annotator UIDs to check from journal instead.", exc_info=True
+            )
+        fetched = search_engine.query("fetched annotator response", test=test, sut=sut)
+        cached = search_engine.query("using cached annotator response", test=test, sut=sut)
+        return sorted({entry["annotator"] for entry in fetched + cached})
+
+
 class ConsistencyChecker:
 
     def __init__(self, journal_path, calibration=False):
         self.journal_path = journal_path
-        self.calibration = calibration
+        self.entities = RunEntities.from_journal(JournalSearch(journal_path), calibration)
+        e = self.entities
 
-        # Entities to run checks for.
-        self.benchmark = None
-        self.suts = None
-        self.tests = None
-        self.annotators = None
-        self.hazards = None
-        self._collect_entities()
-
-        # Checks to run at each level.
-        self.test_sut_level_checker = None
-        self.test_sut_annotator_level_checker = None
+        self.test_sut_level_checker = JournalEntityLevelCheck(
+            "Test x SUT level checks", self._test_sut_checks(e.benchmark), tests=e.tests, suts=e.suts
+        )
+        self.test_sut_annotator_level_checker = JournalEntityLevelCheck(
+            "Test x SUT x Annotator checks",
+            [EachResponseAnnotatedOnce, EachAnnotationTranslatedOnce, MinValidAnnotatorItems],
+            tests=e.tests,
+            suts=e.suts,
+            annotators=e.annotators,
+        )
         self.hazard_sut_level_checker = None
-        self._init_checkers()
+        if e.hazards:
+            self.hazard_sut_level_checker = JournalEntityLevelCheck(
+                "Hazard x SUT checks", self._hazard_sut_checks(e.benchmark), hazards=e.hazards, suts=e.suts
+            )
+        self._check_groups = [
+            c
+            for c in (self.test_sut_level_checker, self.test_sut_annotator_level_checker, self.hazard_sut_level_checker)
+            if c is not None
+        ]
 
     @staticmethod
     def benchmark_has_multiple_annotators(benchmark: str) -> bool:
@@ -532,89 +583,27 @@ class ConsistencyChecker:
             return False
         return True
 
-    @property
-    def _check_groups(self):
-        """List of all sub-checkers."""
-        if self.hazards is not None:
-            return [self.test_sut_level_checker, self.test_sut_annotator_level_checker, self.hazard_sut_level_checker]
-        return [self.test_sut_level_checker, self.test_sut_annotator_level_checker]
-
-    def _collect_entities(self):
-        # Get all SUTs and tests that were ran in the journal. We will run checks for each (SUT, test) pair.
-        search_engine = JournalSearch(self.journal_path)
-        start_message = "starting calibration run" if self.calibration else "starting run"
-        starting_run_entry = search_engine.query(start_message)
-        assert len(starting_run_entry) == 1
-
-        benchmarks = starting_run_entry[0]["benchmarks"]
-        assert len(benchmarks) == 1, "Consistency checker can only handle single-benchmark journals."
-        self.benchmark = benchmarks[0]
-        self.suts = starting_run_entry[0]["suts"]
-        self.tests = starting_run_entry[0]["tests"]
-        try:
-            secrets = load_secrets_from_config()
-            test_obj = TESTS.make_instance(self.tests[0], secrets=secrets)
-            self.annotators = test_obj.get_annotators()
-        except Exception as e:
-            # Can't load test object, get annotators from journal instead.
-            print("Failed to load test object. Collecting annotator UIDs to check from journal instead.")
-            fetched_annotator_entries = search_engine.query(
-                "fetched annotator response", test=self.tests[0], sut=self.suts[0]
-            )
-            cached_annotator_entries = search_engine.query(
-                "using cached annotator response", test=self.tests[0], sut=self.suts[0]
-            )
-            self.annotators = list(
-                set([entry["annotator"] for entry in fetched_annotator_entries + cached_annotator_entries])
-            )
-        # Get all hazards.
-        hazard_entries = search_engine.query("hazard info", benchmark=self.benchmark)
-        if len(hazard_entries) > 0:
-            # Keep self.hazards = None if no "hazard info" entries are found (like in old journals).
-            self.hazards = list(set([entry["hazard"] for entry in hazard_entries]))
-
-    def _init_checkers(self):
-        test_sut_checks = [
+    @classmethod
+    def _test_sut_checks(cls, benchmark: str) -> List:
+        checks = [
             EachPromptQueuedOnce,
             EachPromptRespondedToOnce,
             EachResponseTranslatedOnce,
             EachItemMeasuredOnce,
             NumItemsFinishedEqualsMeasuredItems,
         ]
-        test_sut_annotator_checks = [EachResponseAnnotatedOnce, EachAnnotationTranslatedOnce]
+        if cls.benchmark_has_multiple_annotators(benchmark):
+            checks.append(AnnotationsMergedCorrectly)
+        return checks
 
-        if self.benchmark_has_multiple_annotators(self.benchmark):
-            test_sut_checks.append(AnnotationsMergedCorrectly)
-        test_sut_annotator_checks.append(MinValidAnnotatorItems)
-
-        self.test_sut_level_checker = JournalEntityLevelCheck(
-            "Test x SUT level checks",
-            test_sut_checks,
-            tests=self.tests,
-            suts=self.suts,
-        )
-        self.test_sut_annotator_level_checker = JournalEntityLevelCheck(
-            "Test x SUT x Annotator checks",
-            test_sut_annotator_checks,
-            tests=self.tests,
-            suts=self.suts,
-            annotators=self.annotators,
-        )
-        if self.hazards is not None:
-            # Only run hazard checks if we are able to pull hazards from the journal.
-            if self.benchmark_measures_violation_probability(self.benchmark):
-                hazard_sut_checks = [ViolationProbabilitiesInRange]
-            elif self.benchmark_score_is_frac_safe(self.benchmark):
-                # TODO: Add checks for numeric grade and letter grade.
-                hazard_sut_checks = [HazardScoreIsFracSafe]
-            else:
-                hazard_sut_checks = [HazardScoreInRange]
-            self.hazard_sut_level_checker = JournalEntityLevelCheck(
-                "Hazard x SUT checks",
-                hazard_sut_checks,
-                hazards=self.hazards,
-                suts=self.suts,
-            )
+    @classmethod
+    def _hazard_sut_checks(cls, benchmark: str) -> List:
+        if cls.benchmark_measures_violation_probability(benchmark):
+            return [ViolationProbabilitiesInRange]
+        if cls.benchmark_score_is_frac_safe(benchmark):
+            # TODO: Add checks for numeric grade and letter grade.
+            return [HazardScoreIsFracSafe]
+        return [HazardScoreInRange]
 
     def run(self, verbose=False):
         self._collect_results()
@@ -626,17 +615,17 @@ class ConsistencyChecker:
     def _collect_results(self):
         """Populate the results/warning tables of each check level."""
         search_engine = JournalSearch(self.journal_path)
-        for test in self.tests:
-            for sut in self.suts:
+        e = self.entities
+        for test in e.tests:
+            for sut in e.suts:
                 self.test_sut_level_checker.run_checks_for_row(search_engine, sut=sut, test=test)
-                for annotator in self.annotators:
+                for annotator in e.annotators:
                     self.test_sut_annotator_level_checker.run_checks_for_row(
                         search_engine, sut=sut, test=test, annotator=annotator
                     )
-        if self.hazards is not None:
-            for hazard in self.hazards:
-                for sut in self.suts:
-                    self.hazard_sut_level_checker.run_checks_for_row(search_engine, sut=sut, hazard=hazard)
+        for hazard in e.hazards:
+            for sut in e.suts:
+                self.hazard_sut_level_checker.run_checks_for_row(search_engine, sut=sut, hazard=hazard)
 
     @staticmethod
     def format_result(result: bool) -> str:

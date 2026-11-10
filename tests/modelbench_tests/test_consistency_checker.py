@@ -234,10 +234,10 @@ def test_calibration_run(tmp_path, calibration_run):
 def test_entities_collected(tmp_path, basic_benchmark_run):
     checker = init_checker_for_journal(tmp_path, basic_benchmark_run)
 
-    assert sorted(checker.suts) == ["sut1", "sut2"]
-    assert checker.tests == ["test1"]
-    assert sorted(checker.annotators) == ["annotator1", "annotator2", "annotator3"]
-    assert checker.hazards == ["hazard1"]
+    assert sorted(checker.entities.suts) == ["sut1", "sut2"]
+    assert checker.entities.tests == ["test1"]
+    assert sorted(checker.entities.annotators) == ["annotator1", "annotator2", "annotator3"]
+    assert checker.entities.hazards == ["hazard1"]
 
 
 def test_cached_and_fetched_only_annotators_also_collected(tmp_path, basic_benchmark_run):
@@ -245,8 +245,8 @@ def test_cached_and_fetched_only_annotators_also_collected(tmp_path, basic_bench
     basic_benchmark_run.append(make_sut_entry("using cached annotator response", annotator="annotator5"))
     checker = init_checker_for_journal(tmp_path, basic_benchmark_run)
 
-    assert "annotator4" in checker.annotators
-    assert "annotator5" in checker.annotators
+    assert "annotator4" in checker.entities.annotators
+    assert "annotator5" in checker.entities.annotators
 
 
 @pytest.mark.parametrize(
@@ -747,7 +747,7 @@ def test_hazard_score_skips_with_no_hazard_info_entry(tmp_path):
         hazard_tests={},
     )
     checker = init_checker_for_journal(tmp_path, run)
-    assert checker.hazards is None
+    assert checker.entities.hazards == []
 
     checker.run()
     subchecker = checker.hazard_sut_level_checker
