@@ -336,13 +336,9 @@ def consistency_check(journal_path, verbose):
 
 def run_consistency_check(journal_path, verbose, calibration=False) -> bool:
     """Return True if all checks passed successfully"""
-    journal_paths = []
     if journal_path.is_dir():
-        # Search for all journal files in the directory.
-        for p in journal_path.rglob("*"):
-            if p.name.startswith("journal-run") and (p.suffix == ".jsonl" or p.suffix == ".zst"):
-                journal_paths.append(p)
-        if len(journal_paths) == 0:
+        journal_paths = [p for p in journal_path.rglob("journal-run*") if p.suffix in (".jsonl", ".zst")]
+        if not journal_paths:
             raise click.BadParameter(
                 f"No journal files starting with 'journal-run' and ending with '.jsonl' or '.zst' found in the directory '{journal_path}'."
             )
