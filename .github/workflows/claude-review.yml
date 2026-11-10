@@ -16,10 +16,6 @@ on:
   issue_comment:
     types: [created]
 
-concurrency:
-  group: claude-review-${{ github.event.pull_request.number || github.event.issue.number }}
-  cancel-in-progress: true
-
 jobs:
   review:
     if: >-
@@ -34,6 +30,10 @@ jobs:
         && startsWith(github.event.comment.body, '/claude-review')
         && contains(fromJSON(vars.CLAUDE_REVIEW_USERS || '[]'), github.event.comment.user.login)
       )
+    # Job-level, so runs whose `if` is false (e.g. any other PR comment) don't cancel a review in progress.
+    concurrency:
+      group: claude-review-${{ github.event.pull_request.number || github.event.issue.number }}
+      cancel-in-progress: true
     runs-on: ubuntu-latest
     permissions:
       contents: read
