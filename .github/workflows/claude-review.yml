@@ -1,6 +1,6 @@
 name: Claude PR review
 
-# Reviews PRs with Claude on Vertex AI, using the same review guide as Gemini.
+# Reviews PRs with Claude on Vertex AI, following .github/review-guide.md.
 #
 # Required repo variables: GCP_WIF_PROVIDER, GCP_SERVICE_ACCOUNT, GCP_PROJECT_ID.
 #   CLAUDE_REVIEW_USERS: JSON list of GitHub logins whose PRs get reviewed, e.g. ["rogthefrog", "wpietri"].
@@ -64,7 +64,7 @@ jobs:
             REPO: ${{ github.repository }}
             PR NUMBER: ${{ env.PR_NUMBER }}
 
-            Review this pull request. Read .gemini/styleguide.md first and follow it exactly: it defines
+            Review this pull request. Read .github/review-guide.md first and follow it exactly: it defines
             what to flag, severity levels, tone, and output length.
 
             - Only report CRITICAL, HIGH, or MEDIUM issues. Skip LOW.
